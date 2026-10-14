@@ -1,13 +1,14 @@
+
 import os
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from supabase import create_client, Client
 
 app = FastAPI(title="TechClues Social AI")
 
-Set these in your hosting environment variables.
+Configure these in your hosting environment.
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -26,12 +27,9 @@ BOOKING_LINK = (
 )
 
 SERVICE_LINKS = {
-"Website Development":
-"https://techclues.co.uk/website-development",
-"Digital Marketing":
-"https://techclues.co.uk/digital-marketing",
-"AI Services":
-"https://techclues.co.uk/ai-services",
+"Website Development": "https://techclues.co.uk/website-development",
+"Digital Marketing": "https://techclues.co.uk/digital-marketing",
+"AI Services": "https://techclues.co.uk/ai-services",
 }
 
 conversation_steps = {}
@@ -54,7 +52,6 @@ return result.data[0] if result.data else None
 def save_customer(sender_id, platform, **fields):
 current = get_customer(sender_id) or {}
 
-# Keep the existing customer details when updating.
 row = {
     "sender_id": sender_id,
     "platform": platform,
@@ -64,13 +61,15 @@ row = {
     "service": current.get("service"),
     "enquiry_type": current.get("enquiry_type"),
     "notes": current.get("notes"),
-    "booking_status": current.get("booking_status")
-        or "not booked",
-    "created_at": current.get("created_at")
-        or datetime.now(timezone.utc).isoformat(),
+    "booking_status": (
+        current.get("booking_status") or "not booked"
+    ),
+    "created_at": (
+        current.get("created_at")
+        or datetime.now(timezone.utc).isoformat()
+    ),
 }
 
-# Preserve compatibility with the old full_name field.
 if "full_name" in fields:
     fields["name"] = fields.pop("full_name")
 
@@ -95,7 +94,7 @@ text = message.lower()
 
 if any(x in text for x in [
     "appointment", "book a call", "book a meeting",
-    "schedule", "consultation", "calendar"
+    "schedule", "consultation", "calendar", "booking"
 ]):
     return "appointment"
 
@@ -111,7 +110,9 @@ if any(x in text for x in [
 ]):
     return "services"
 
-if any(x in text for x in ["hi", "hello", "hey"]):
+if any(x in text for x in [
+    "hi", "hello", "hey", "salam", "assalam"
+]):
     return "greeting"
 
 return "general"
@@ -127,11 +128,15 @@ keywords = {
     "Software Development": ["software", "custom software"],
     "Web 3.0 & Blockchain": ["blockchain", "web3", "web 3.0"],
     "Penetration Testing": ["penetration testing", "pentest"],
-    "Web Security": ["web security", "cybersecurity", "security"],
-    "Digital Marketing": ["digital marketing", "social media marketing"],
+    "Web Security": ["web security", "cybersecurity"],
+    "Digital Marketing": [
+        "digital marketing", "social media marketing"
+    ],
     "SEO": ["seo", "search engine optimization"],
     "Communication & Support": ["support", "communication"],
-    "AI Services": ["ai services", "artificial intelligence", "ai agent"],
+    "AI Services": [
+        "ai services", "artificial intelligence", "ai agent"
+    ],
     "DevOps Services": ["devops", "cloud computing"],
 }
 
@@ -139,10 +144,9 @@ for service, terms in keywords.items():
     if any(term in text for term in terms):
         return service
 
-# Also match the actual names stored in Supabase.
 for service in get_services():
-    name = service["service_name"]
-    if name.lower() in text:
+    name = service.get("service_name", "")
+    if name and name.lower() in text:
         return name
 
 return None
@@ -175,6 +179,10 @@ if step == "phone":
 
 if step == "email":
     email = None if message.lower() == "skip" else message
+
+    if email and ("@" not in email or "." not in email):
+        return "Please enter a valid email address or type Skip."
+
     save_customer(sender_id, platform, email=email)
     conversation_steps[sender_id] = "service"
     return "Which TechClues service are you interested in?"
@@ -217,31 +225,23 @@ if intent == "services":
     lines = []
     for item in services:
         name = item["service_name"]
+        description = item.get("description") or ""
         price = item.get("price")
         currency = item.get("currency") or ""
-        description = item.get("description") or ""
+
+        if price is None or float(price) == 0:
+            price_text = "Contact us for a quotation"
+        else:
+            price_text = f"{currency} {price}".strip()
+
         lines.append(
-            f"- {name}: {description}. "
-            f"Price: {currency} {price}"
+            f"- {name}: {description}\n  Price: {price_text}"
         )
 
     return (
         "Here are our services:\n\n"
         + "\n".join(lines)
         + f"\n\nWebsite: {WEBSITE}"
-    )
-
-service = get_service_match(message)
-
-if service:
-    save_customer(sender_id, platform, service=service)
-
-    link = SERVICE_LINKS.get(service, WEBSITE)
-    return (
-        f"We offer {service} services.\n"
-        f"Learn more: {link}\n\n"
-        "Would you like to discuss your requirements "
-        "or book a consultation?"
     )
 
 if intent in ("pricing", "appointment"):
@@ -253,9 +253,28 @@ if intent in ("pricing", "appointment"):
     conversation_steps[sender_id] = "name"
 
     if intent == "pricing":
-        return "I can record your pricing enquiry. May I have your full name?"
+        return (
+            "Our pricing depends on your requirements. "
+            "May I have your full name so we can record your enquiry?"
+        )
 
-    return "Certainly! May I have your full name to start your consultation request?"
+    return (
+        "Certainly! May I have your full name to start "
+        "your consultation request?"
+    )
+
+service = get_service_match(message)
+
+if service:
+    save_customer(sender_id, platform, service=service)
+    link = SERVICE_LINKS.get(service, WEBSITE)
+
+    return (
+        f"We offer {service} services.\n"
+        f"Learn more: {link}\n\n"
+        "Would you like to discuss your requirements "
+        "or book a consultation?"
+    )
 
 return (
     "Thank you for contacting TechClues!\n"
@@ -291,6 +310,7 @@ data.message
 )
 }
 except Exception as exc:
+print(f"Reply error: {exc}")
 raise HTTPException(
 status_code=500,
 detail="Could not process the message. Check server logs."
